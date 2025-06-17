@@ -1,6 +1,12 @@
+from datetime import datetime, timedelta
+import pickle
 import re
 import os, sys, socket
 import threading
+
+CACHE_FILE = "./cache/proxy_cache.pkl"
+cache = {}
+CACHE_EXPIRATION = timedelta(minutes=30)
 
 numero_port = 8080
 adresse_ip = ''
@@ -8,6 +14,21 @@ proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_
 proxy_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
 proxy_socket.bind((adresse_ip, numero_port))
 proxy_socket.listen(socket.SOMAXCONN)
+
+
+def load_cache():
+    try:
+        with open(CACHE_FILE, 'rb') as f:
+            return pickle.load(f)
+    except (FileNotFoundError, EOFError):
+        return {}
+
+def save_cache():
+    with open(CACHE_FILE, 'wb') as f:
+        pickle.dump(cache, f)
+
+# Chargement initial
+cache = load_cache()
 
 def gere_requete_HTTPS(client_socket, requete):
     return
@@ -56,16 +77,37 @@ def gere_requete_HTTP(client_socket, requete):
     try:
         # Décodage de la requête
         requete_str = requete.decode('utf-8', errors='replace') if isinstance(requete, bytes) else requete
-        ######### PARTIE 1 : extraction URL et décomposition ######### 
-        premiere_ligne = requete_str.split('\n')[0]
+        
+        # Extraction des informations de base
+        lignes = requete_str.split('\r\n')
+        premiere_ligne = lignes[0]
         try:
             methode, url, version = premiere_ligne.split()
         except ValueError:
             print("Requête malformée :", premiere_ligne)
             client_socket.close()
-            return  
+            return
+
+        # Extraction des headers
+        headers = {}
+        for ligne in lignes[1:]:
+            if ':' in ligne:
+                key, value = ligne.split(':', 1)
+                headers[key.strip().lower()] = value.strip()
+
+        # Gestion du corps POST
+        body = b''
+        if methode.upper() == 'POST' and 'content-length' in headers:
+            content_length = int(headers['content-length'])
+            while len(body) < content_length:
+                data = client_socket.recv(4096)
+                if not data:
+                    break
+                body += data
+
         # Nettoyage URL
         url = url.replace('http://', '').replace('https://', '')
+        
         # Extraction host/port/chemin
         port = 80
         if '/' in url:
@@ -73,61 +115,84 @@ def gere_requete_HTTP(client_socket, requete):
             chemin = '/' + chemin
         else:
             host = url
-            chemin = '/'  
-        # Gestion du port personnalisé
+            chemin = '/'
+            
         if ':' in host:
             host, port_str = host.split(':', 1)
             try:
                 port = int(port_str)
             except ValueError:
                 port = 80
-        ######### PARTIE 2 : reconstruction de la requête #########
-        # faire des requetes en version HTTP/1.0
-        # suppression des lignes commançant par Keep-Alive et Proxy-Connection: Keep-Alive;
-        # suppression de la ligne commançant par Accept-Encoding: gzip
-        lignes = requete_str.split('\r\n')
-        nouvelles_lignes = []
-        for ligne in lignes:
-            if (ligne.lower().startswith("connection:") or
-                ligne.lower().startswith("proxy-connection:") or
-                ligne.lower().startswith("accept-encoding:")):
-                continue   
-            elif ligne.startswith(methode):
-                nouvelles_lignes.append(f"{methode} {chemin} HTTP/1.0")  
-            elif ligne.strip():  
-                nouvelles_lignes.append(ligne)
+
+        # Vérification du cache (GET seulement)
+        if methode.upper() == 'GET' and url in cache:
+            cached_data, timestamp = cache[url]
+            if datetime.now() - timestamp < CACHE_EXPIRATION:
+                print(f"[CACHE] Utilisation du cache pour {url}")
+                client_socket.sendall(cached_data)
+                return
+
         # Reconstruction de la requête
-        requete_reconstruit = '\r\n'.join(nouvelles_lignes) + '\r\n\r\n'
-        ######### PARTIE 3 : envoi au serveur cible #########
+        requete_forward = [f"{methode} {chemin} HTTP/1.0"]  # Force HTTP/1.0
+        
+        # Conservation des headers importants
+        for key, value in headers.items():
+            if key not in ['connection', 'proxy-connection', 'accept-encoding', 'content-length']:
+                requete_forward.append(f"{key}: {value}")
+        
+        # Ajout du Host si manquant
+        if 'host' not in [h.split(':')[0].lower() for h in requete_forward[1:]]:
+            requete_forward.append(f"Host: {host}")
+            
+        requete_forward.append("\r\n")
+        requete_finale = '\r\n'.join(requete_forward).encode()
+        
+        # Connexion au serveur
         try:
             serveur_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             serveur_socket.connect((host, port))
-            serveur_socket.sendall(requete_reconstruit.encode()) 
+            
+            # Envoi de la requête
+            serveur_socket.sendall(requete_finale)
+            if body:  # Envoi du corps POST si existe
+                serveur_socket.sendall(body)
+
             # Réception de la réponse
             reponse = b""
             while True:
                 data = serveur_socket.recv(4096)
                 if not data:
                     break
-                reponse += data  
-            ######### PARTIE 4 : filtrage du contenu #########
+                reponse += data
+
+            # Mise en cache (GET seulement)
+            if methode.upper() == 'GET' and b'200 OK' in reponse.split(b'\r\n')[0]:
+                print(f"[CACHE] Mise en cache de {url}")
+                cache[url] = (reponse, datetime.now())
+                save_cache()
+
+            # Filtrage du contenu
             if b'\r\n\r\n' in reponse:
                 headers, body = reponse.split(b'\r\n\r\n', 1)
-                headers_str = headers.decode('utf-8', errors='replace')  
+                headers_str = headers.decode('utf-8', errors='replace')
                 if 'text/html' in headers_str.lower():
-                    headers, body = filtrer_contenu_html(headers_str, body)    
+                    headers, body = filtrer_contenu_html(headers_str, body)
                 reponse_finale = headers + b'\r\n\r\n' + body
             else:
-                reponse_finale = reponse  
-            # envoie au client de la réponse finale
+                reponse_finale = reponse
+
             client_socket.sendall(reponse_finale)
-        # j'ai demandé à deepseek d'ajouter toutes les parties pour les exceptions et erreurs pour le déboggage
+
         except socket.gaierror:
-            print(f"Erreur DNS avec host: {host}")
+            print(f"Erreur DNS: impossible de résoudre {host}")
             client_socket.send(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+        except ConnectionRefusedError:
+            print(f"Connexion refusée par {host}:{port}")
+            client_socket.send(b"HTTP/1.1 503 Service Unavailable\r\n\r\n")
         except Exception as e:
-            print(f"Erreur de connexion au serveur: {e}")
-            client_socket.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")  
+            print(f"Erreur de connexion: {e}")
+            client_socket.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+
     except Exception as e:
         print(f"Erreur générale: {e}")
     finally:
