@@ -24,6 +24,19 @@ proxy_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
 proxy_socket.bind((adresse_ip, numero_port))
 proxy_socket.listen(socket.SOMAXCONN)
 
+# CODES COULEUR 
+class Colors:
+    RED = "\033[91m"
+    GREEN = "\033[92m"
+    YELLOW = "\033[93m"
+    BLUE = "\033[94m"
+    MAGENTA = "\033[95m"
+    CYAN = "\033[96m"
+    WHITE = "\033[97m"
+    BOLD = "\033[1m"
+    UNDERLINE = "\033[4m"
+    END = "\033[0m"
+
 
 def load_cache():
     try:
@@ -45,9 +58,13 @@ def gere_requete_HTTPS(client_socket, requete):
 
 
 def load_config():
+    print("Chemin absolu du JSON:", os.path.abspath(CONFIG_FILE))
     try:
         with open(CONFIG_FILE) as f:
-            return json.load(f)
+            config = json.load(f)
+            # Nettoyage des mots interdits
+            config['mots_interdits'] = [mot.strip() for mot in config['mots_interdits']]
+            return config
     except (FileNotFoundError, json.JSONDecodeError):
         return {'mots_interdits': [], 'filtrage_actif': True}
 
@@ -55,8 +72,15 @@ def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retour
     config = load_config()
     mots_interdits = config.get('mots_interdits', [])
     filtrage_actif = config.get('filtrage_actif', True)
+    
+    print(f"\n{Colors.BOLD}{Colors.MAGENTA}=== DEBUG FILTRAGE ==={Colors.END}")
+    print(f"{Colors.CYAN}Configuration chargée:{Colors.END} {config}")
+    print(f"{Colors.CYAN}Mots interdits:{Colors.END} {Colors.RED}{mots_interdits}{Colors.END}")
+    print(f"{Colors.CYAN}Filtrage actif:{Colors.END} {Colors.GREEN if filtrage_actif else Colors.RED}{filtrage_actif}{Colors.END}")
+
     if not filtrage_actif:
         return headers.encode('utf-8'), body
+
     try:
         content_type = ""
         for line in headers.split('\n'):
@@ -73,9 +97,10 @@ def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retour
 
         # Filtrage du contenu
         body_str = re.sub(r'<title>(.*?)</title>', r'<title>[FILTRÉ] \1</title>', body_str, flags=re.IGNORECASE)
-        mots_interdits = ['Bienvenue', 'adresse', 'disponibles', 'Site']
+        #mots_interdits = ['Bienvenue', 'adresse', 'disponibles', 'Site']
         for mot in mots_interdits:
-            body_str = body_str.replace(mot, '[CENSURÉ]')
+            #body_str = body_str.replace(mot, '[CENSURÉ]')
+            body_str = re.sub(re.escape(mot), '[CENSURÉ]', body_str, flags=re.IGNORECASE )
 
         if "interdit" in body_str.lower():
             nouveau_body = "<html><body><h1>Page bloquée par le proxy</h1></body></html>"
@@ -248,7 +273,7 @@ def gerer_client(client_socket):
         return 
     
     if requete.startswith(b'CONNECT'): # HTTPS
-        print("\n\033[1;35m=== REQUÊTE HTTPS RECUE ===\033[0m")
+        #print("\n\033[1;35m=== REQUÊTE HTTPS RECUE ===\033[0m")
         gere_requete_HTTPS(client_socket, requete)
     else : # HTTP
         print("\n\033[1;36m=== REQUÊTE HTTP RECUE ===\033[0m")
@@ -260,4 +285,3 @@ while 1:
     (client_socket, TSAP_client) = proxy_socket.accept()
     print("Nouvelle connexion depuis ", TSAP_client)
     threading.Thread(target=gerer_client, args=(client_socket,)).start() # gérer client
-
