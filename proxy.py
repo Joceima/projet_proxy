@@ -1,13 +1,22 @@
 from datetime import datetime, timedelta
+import json
 import pickle
 import re
 import os, sys, socket
 import threading
+from configHandler import ConfigHandler
+import threading
+from http.server import HTTPServer
 
+#### CONFIGURATION DU CACHE
 CACHE_FILE = "./cache/proxy_cache.pkl"
 cache = {}
 CACHE_EXPIRATION = timedelta(minutes=30)
 
+#### CONFIGURATION DU FILTRAGE - config handler
+CONFIG_FILE = "proxy_config.json"
+
+#### CONFIGURATION DE LA SOCKET DU PROXY
 numero_port = 8080
 adresse_ip = ''
 proxy_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM, socket.IPPROTO_TCP)
@@ -27,13 +36,27 @@ def save_cache():
     with open(CACHE_FILE, 'wb') as f:
         pickle.dump(cache, f)
 
+
 # Chargement initial
 cache = load_cache()
 
 def gere_requete_HTTPS(client_socket, requete):
     return
 
+
+def load_config():
+    try:
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {'mots_interdits': [], 'filtrage_actif': True}
+
 def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retourne toujours des bytes
+    config = load_config()
+    mots_interdits = config.get('mots_interdits', [])
+    filtrage_actif = config.get('filtrage_actif', True)
+    if not filtrage_actif:
+        return headers.encode('utf-8'), body
     try:
         content_type = ""
         for line in headers.split('\n'):
@@ -236,4 +259,5 @@ def gerer_client(client_socket):
 while 1:
     (client_socket, TSAP_client) = proxy_socket.accept()
     print("Nouvelle connexion depuis ", TSAP_client)
-    threading.Thread(target=gerer_client, args=(client_socket,)).start()
+    threading.Thread(target=gerer_client, args=(client_socket,)).start() # gérer client
+
