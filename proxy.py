@@ -14,18 +14,14 @@ def gere_requete_HTTPS(client_socket, requete):
 
 def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retourne toujours des bytes
     try:
-        # Détection du Content-Type
         content_type = ""
         for line in headers.split('\n'):
             if line.lower().startswith('content-type:'):
                 content_type = line.split(';')[0].lower()
                 break
 
-        # Si ce n'est pas du HTML, on ne filtre pas
         if 'text/html' not in content_type:
-            return headers.encode('utf-8'), body  # Headers en bytes
-
-        # Décodage du corps
+            return headers.encode('utf-8'), body  #
         try:
             body_str = body.decode('utf-8', errors='replace')
         except UnicodeDecodeError:
@@ -60,19 +56,16 @@ def gere_requete_HTTP(client_socket, requete):
     try:
         # Décodage de la requête
         requete_str = requete.decode('utf-8', errors='replace') if isinstance(requete, bytes) else requete
-
-        # Extraction méthode/URL
+        ######### PARTIE 1 : extraction URL et décomposition ######### 
         premiere_ligne = requete_str.split('\n')[0]
         try:
             methode, url, version = premiere_ligne.split()
         except ValueError:
             print("Requête malformée :", premiere_ligne)
             client_socket.close()
-            return
-
+            return  
         # Nettoyage URL
         url = url.replace('http://', '').replace('https://', '')
-
         # Extraction host/port/chemin
         port = 80
         if '/' in url:
@@ -80,75 +73,100 @@ def gere_requete_HTTP(client_socket, requete):
             chemin = '/' + chemin
         else:
             host = url
-            chemin = '/'
-
-        # Gestion du port personnalisé (host:port)
+            chemin = '/'  
+        # Gestion du port personnalisé
         if ':' in host:
             host, port_str = host.split(':', 1)
             try:
                 port = int(port_str)
             except ValueError:
                 port = 80
-
-        # Gestion du Host header si l'URL était relative
-        if host == '':
-            for ligne in requete_str.split('\r\n'):
-                if ligne.lower().startswith('host:'):
-                    host = ligne.split(':', 1)[1].strip()
-                    break
-
-        # Connexion au serveur cible
+        ######### PARTIE 2 : reconstruction de la requête #########
+        # faire des requetes en version HTTP/1.0
+        # suppression des lignes commançant par Keep-Alive et Proxy-Connection: Keep-Alive;
+        # suppression de la ligne commançant par Accept-Encoding: gzip
+        lignes = requete_str.split('\r\n')
+        nouvelles_lignes = []
+        for ligne in lignes:
+            if (ligne.lower().startswith("connection:") or
+                ligne.lower().startswith("proxy-connection:") or
+                ligne.lower().startswith("accept-encoding:")):
+                continue   
+            elif ligne.startswith(methode):
+                nouvelles_lignes.append(f"{methode} {chemin} HTTP/1.0")  
+            elif ligne.strip():  
+                nouvelles_lignes.append(ligne)
+        # Reconstruction de la requête
+        requete_reconstruit = '\r\n'.join(nouvelles_lignes) + '\r\n\r\n'
+        ######### PARTIE 3 : envoi au serveur cible #########
         try:
             serveur_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             serveur_socket.connect((host, port))
+            serveur_socket.sendall(requete_reconstruit.encode()) 
+            # Réception de la réponse
+            reponse = b""
+            while True:
+                data = serveur_socket.recv(4096)
+                if not data:
+                    break
+                reponse += data  
+            ######### PARTIE 4 : filtrage du contenu #########
+            if b'\r\n\r\n' in reponse:
+                headers, body = reponse.split(b'\r\n\r\n', 1)
+                headers_str = headers.decode('utf-8', errors='replace')  
+                if 'text/html' in headers_str.lower():
+                    headers, body = filtrer_contenu_html(headers_str, body)    
+                reponse_finale = headers + b'\r\n\r\n' + body
+            else:
+                reponse_finale = reponse  
+            # envoie au client de la réponse finale
+            client_socket.sendall(reponse_finale)
+        # j'ai demandé à deepseek d'ajouter toutes les parties pour les exceptions et erreurs pour le déboggage
         except socket.gaierror:
             print(f"Erreur DNS avec host: {host}")
             client_socket.send(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
-            client_socket.close()
-            return
-
-        # Envoi de la requête
-        requete_forward = f"{methode} {chemin} HTTP/1.0\r\nHost: {host}\r\n\r\n"
-        serveur_socket.sendall(requete_forward.encode())
-
-        # Réception réponse
-        reponse = b""
-        while True:
-            data = serveur_socket.recv(4096)
-            if not data:
-                break
-            reponse += data
-
-        # Filtrage
-        if b'\r\n\r\n' in reponse:
-            headers, body = reponse.split(b'\r\n\r\n', 1)
-            headers_str = headers.decode('utf-8', errors='replace')
-            if 'text/html' in headers_str.lower():
-                headers, body = filtrer_contenu_html(headers_str, body)
-            reponse_finale = headers + b'\r\n\r\n' + body
-        else:
-            reponse_finale = reponse
-
-        # Renvoi au client
-        client_socket.sendall(reponse_finale)
-
+        except Exception as e:
+            print(f"Erreur de connexion au serveur: {e}")
+            client_socket.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")  
     except Exception as e:
-        print(f"HTTP Error: {e}")
-        client_socket.send(b"HTTP/1.1 500 Internal Server Error\r\n\r\n")
+        print(f"Erreur générale: {e}")
     finally:
         client_socket.close()
-        serveur_socket.close()
-        
+        if 'serveur_socket' in locals():
+            serveur_socket.close()
+
+def analyser_requete(requete_bytes):
+    try:
+        requete = requete_bytes.decode('utf-8')
+    except UnicodeDecodeError:
+        requete = requete_bytes.decode('latin-1')
+    
+    lignes = requete.split('\r\n')
+    premiere_ligne = lignes[0]
+    
+    print("\nAnalyse détaillée:")
+    print(f"Méthode: {premiere_ligne.split()[0]}")
+    print(f"URL: {premiere_ligne.split()[1]}")
+    print(f"Version HTTP: {premiere_ligne.split()[2]}")
+    
+    print("\nEn-têtes:")
+    for header in lignes[1:]:
+        if header:  
+            print(f"- {header.split(':')[0]}: {':'.join(header.split(':')[1:]).strip()}")   
+            
 def gerer_client(client_socket):
     requete = client_socket.recv(4096)
     if not requete : # pas de requeter
         return 
+    
     if requete.startswith(b'CONNECT'): # HTTPS
-        print("Ceci est une requete HTTPS")
+        print("\n\033[1;35m=== REQUÊTE HTTPS RECUE ===\033[0m")
         gere_requete_HTTPS(client_socket, requete)
     else : # HTTP
-        print("Ceci est une requete HTTP")
+        print("\n\033[1;36m=== REQUÊTE HTTP RECUE ===\033[0m")
+        analyser_requete(requete)
         gere_requete_HTTP(client_socket, requete)
+        
 
 while 1:
     (client_socket, TSAP_client) = proxy_socket.accept()
