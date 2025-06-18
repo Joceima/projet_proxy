@@ -2,6 +2,7 @@ from datetime import datetime, timedelta
 import json
 import pickle
 import re
+import select
 import os, sys, socket
 import threading
 from configHandler import ConfigHandler
@@ -117,8 +118,54 @@ def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retour
 
 
 ##################### Requete HTTPS #####################
+# tunnel simple sans filtrage
 def gere_requete_HTTPS(client_socket, requete):
-    return
+    try:
+        #----------Extractionhost:port----------
+        print(f"{Colors.BOLD}{Colors.BLUE}=== TUNNEL HTTPS DEMARRE ==={Colors.END}")
+        parts = requete.decode().split()
+        if len(parts) < 2:
+            raise ValueError("Requête CONNECT mal formée")
+        
+        host_port = parts[1].split(':')
+        if len(host_port) != 2:
+            raise ValueError("Format host:port invalide")
+            
+        host = host_port[0]
+        try:
+            port = int(host_port[1])
+        except ValueError:
+            raise ValueError("Le port doit être un nombre")
+        #------------ connexion au serveur cible----------
+        server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        server_socket.connect((host, port))
+        # ------------ envoi d'une confirmation au client ----------
+        client_socket.send(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+        print(f"{Colors.GREEN}Tunnel établi: {host}:{port}{Colors.END}")
+        # ----------- tunnel serveur<->client -------------
+        sockets = [client_socket, server_socket]
+        while True:
+            readable, _, _ = select.select(sockets, [], [])
+            for sock in readable:
+                data = sock.recv(8192)
+                if not data:
+                    raise ConnectionError("Connexion fermée")  
+                if sock is client_socket:
+                    server_socket.send(data)
+                else:
+                    client_socket.send(data)
+    except Exception as e:
+        print(f"{Colors.RED}Erreur tunnel HTTPS: {type(e).__name__}: {e}{Colors.END}")
+        try:
+            client_socket.send(b"HTTP/1.1 502 Bad Gateway\r\n\r\n")
+        except:
+            pass
+    finally:
+        client_socket.close()
+        if 'server_socket' in locals():
+            server_socket.close()
+        print(f"{Colors.BLUE}Tunnel HTTPS fermé{Colors.END}")
+
 
 ##################### Requete HTTP #####################
 """ Fonction permettant de gérer une requette HTTP"""
@@ -270,7 +317,8 @@ def gerer_client(client_socket):
         return 
     
     if requete.startswith(b'CONNECT'): # HTTPS
-        #print("\n\033[1;35m=== REQUÊTE HTTPS RECUE ===\033[0m")
+        print("\n\033[1;35m=== REQUÊTE HTTPS RECUE ===\033[0m")
+        analyser_requete(requete)
         gere_requete_HTTPS(client_socket, requete)
     else : # HTTP
         print("\n\033[1;36m=== REQUÊTE HTTP RECUE ===\033[0m")
