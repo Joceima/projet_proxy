@@ -1,0 +1,2 @@
+mots_interdits=ancienne,adresse
+filtrage_actif=true

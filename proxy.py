@@ -10,12 +10,12 @@ import threading
 from http.server import HTTPServer
 
 #### CONFIGURATION DU CACHE
-CACHE_FILE = "./cache/proxy_cache.pkl"
+CACHE_FILE = "./cache/proxy_cache.txt"
 cache = {}
 CACHE_EXPIRATION = timedelta(minutes=30)
 
 #### CONFIGURATION DU FILTRAGE - config handler
-CONFIG_FILE = "proxy_config.json"
+CONFIG_FILE = "proxy_config.txt"
 
 #### CONFIGURATION DE LA SOCKET DU PROXY
 numero_port = 8080
@@ -39,82 +39,137 @@ class Colors:
     END = "\033[0m"
 
 ################ CACHES FONCTIONS ################ 
-def load_cache():
-    try:
-        with open(CACHE_FILE, 'rb') as f:
-            return pickle.load(f)
-    except (FileNotFoundError, EOFError):
-        return {}
+def save_to_cache(url, content):
+    """Sauvegarde dans un fichier texte avec un fichier .meta"""
+    safe_url = re.sub(r'[^a-zA-Z0-9]', '_', url)
+    cache_path = os.path.join('cache', safe_url)
+    
+    # Fichier de contenu
+    with open(cache_path, 'wb') as f:
+        f.write(content)
+    
+    # Fichier meta (timestamp)
+    with open(cache_path + '.meta', 'w') as f:
+        f.write(str(datetime.now().timestamp()))
 
-def save_cache():
-    with open(CACHE_FILE, 'wb') as f:
-        pickle.dump(cache, f)
-
-# Chargement initial
-cache = load_cache()
+def load_from_cache(url):
+    """Charge depuis le cache si valide"""
+    safe_url = re.sub(r'[^a-zA-Z0-9]', '_', url)
+    cache_path = os.path.join('cache', safe_url)
+    meta_path = cache_path + '.meta'
+    
+    if not os.path.exists(meta_path):
+        return None
+    
+    # Vérification expiration
+    with open(meta_path, 'r') as f:
+        timestamp = float(f.read())
+    
+    if datetime.now().timestamp() - timestamp > CACHE_EXPIRATION.total_seconds():
+        os.remove(cache_path)
+        os.remove(meta_path)
+        return None
+    
+    with open(cache_path, 'rb') as f:
+        return f.read()
 
 ##############Chargement configuration################
 def load_config():
-    print("Chemin absolu du JSON:", os.path.abspath(CONFIG_FILE))
-    try:
-        with open(CONFIG_FILE) as f:
-            config = json.load(f)
-            # Nettoyage des mots interdits
-            config['mots_interdits'] = [mot.strip() for mot in config['mots_interdits']]
-            return config
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {'mots_interdits': [], 'filtrage_actif': True}
+    config = {
+        'mots_interdits': [],
+        'filtrage_actif': True,
+        'extensions_bloquees': []
+    }
     
+    try:
+        with open('proxy_config.txt', 'r') as f:
+            for line in f:
+                line = line.strip()
+                if not line or line.startswith('#'):
+                    continue
+                
+                key, value = line.split('=', 1)
+                key = key.strip().lower()
+                
+                if key == 'mots_interdits':
+                    config['mots_interdits'] = [mot.strip() for mot in value.split(',')]
+                elif key == 'filtrage_actif':
+                    config['filtrage_actif'] = value.lower() in ('oui', 'yes', 'true', '1')
+                elif key == 'extensions_bloquees':
+                    config['extensions_bloquees'] = [ext.strip() for ext in value.split(',')]
+    
+    except FileNotFoundError:
+        print("Fichier de configuration non trouvé, utilisation des valeurs par défaut")
+    
+    return config
 
 ##############Filtrage contenu HTML################
-def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retourne des bytes
+def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):
     config = load_config()
-    print(f"{Colors.CYAN}Configuration chargée:{Colors.END} {config}")
     mots_interdits = config.get('mots_interdits', [])
     filtrage_actif = config.get('filtrage_actif', True)
-    
+    extensions_bloquees = config.get('extensions_bloquees', ['.mp4', '.exe', '.zip'])  # Nouvelle configuration
+
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}=== DEBUG FILTRAGE ==={Colors.END}")
     print(f"{Colors.CYAN}Mots interdits:{Colors.END} {Colors.RED}{mots_interdits}{Colors.END}")
+    print(f"{Colors.CYAN}Extensions bloquées:{Colors.END} {Colors.RED}{extensions_bloquees}{Colors.END}")
     print(f"{Colors.CYAN}Filtrage actif:{Colors.END} {Colors.GREEN if filtrage_actif else Colors.RED}{filtrage_actif}{Colors.END}")
 
     if not filtrage_actif:
         return headers.encode('utf-8'), body
 
     try:
+        # Détection du Content-Type
         content_type = ""
         for line in headers.split('\n'):
             if line.lower().startswith('content-type:'):
                 content_type = line.split(';')[0].lower()
                 break
 
-        if 'text/html' not in content_type:
-            return headers.encode('utf-8'), body  #
+        # Décodage du corps
         try:
             body_str = body.decode('utf-8', errors='replace')
         except UnicodeDecodeError:
             body_str = body.decode('latin-1', errors='replace')
 
-        # Filtrage du contenu
-        body_str = re.sub(r'<title>(.*?)</title>', r'<title>[FILTRÉ] \1</title>', body_str, flags=re.IGNORECASE)
-        #mots_interdits = ['Bienvenue', 'adresse', 'disponibles', 'Site']
-        for mot in mots_interdits:
-            #body_str = body_str.replace(mot, '[CENSURÉ]')
-            body_str = re.sub(re.escape(mot), '[CENSURÉ]', body_str, flags=re.IGNORECASE )
+        # Filtrage des textes (HTML et texte brut)
+        if 'text/html' in content_type or 'text/plain' in content_type:  # Modification pour texte brut
+            # Filtrage du titre
+            body_str = re.sub(r'<title>(.*?)</title>', r'<title>[FILTRÉ] \1</title>', body_str, flags=re.IGNORECASE)
+            
+            # Filtrage des mots interdits
+            for mot in mots_interdits:
+                body_str = re.sub(
+                    re.escape(mot), 
+                    '[CENSURÉ]', 
+                    body_str, 
+                    flags=re.IGNORECASE
+                )
 
-        if "interdit" in body_str.lower():
-            nouveau_body = "<html><body><h1>Page bloquée par le proxy</h1></body></html>"
-            nouveau_headers = "HTTP/1.0 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: {}\r\n\r\n".format(len(nouveau_body))
-            return nouveau_headers.encode('utf-8'), nouveau_body.encode('utf-8')  # Les deux en bytes
+            # Blocage si contenu interdit
+            if "interdit" in body_str.lower():
+                nouveau_body = "<html><body><h1>Page bloquée par le proxy</h1></body></html>"
+                nouveau_headers = f"HTTP/1.0 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: {len(nouveau_body)}\r\n\r\n"
+                return nouveau_headers.encode('utf-8'), nouveau_body.encode('utf-8')
 
-        # Suppression des vidéos MP4
-        body_str = re.sub(r'<video\b.*?</video>', '', body_str, flags=re.DOTALL | re.IGNORECASE)
-        body_str = re.sub(r'<source\b[^>]*\.mp4[^>]*>', '', body_str, flags=re.IGNORECASE)
+        # Filtrage des extensions (pour tous les types de contenu)
+        for ext in extensions_bloquees:
+            if ext in content_type.lower() or f'href=".*{ext}' in body_str.lower():
+                body_str = f"<html><body><h1>Contenu bloqué (extension {ext} interdite)</h1></body></html>"
+                headers = f"HTTP/1.0 403 Forbidden\r\nContent-Type: text/html\r\nContent-Length: {len(body_str)}\r\n\r\n"
+                return headers.encode('utf-8'), body_str.encode('utf-8')
 
-        return headers.encode('utf-8'), body_str.encode('utf-8')  # Les deux en bytes
+        # Filtrage spécifique HTML
+        if 'text/html' in content_type:
+            # Suppression des vidéos MP4 et autres médias
+            body_str = re.sub(r'<(video|audio|embed)\b.*?</\1>', '', body_str, flags=re.DOTALL | re.IGNORECASE)
+            body_str = re.sub(r'<source\b[^>]*(\.mp4|\.webm|\.ogg)[^>]*>', '', body_str, flags=re.IGNORECASE)
+
+        return headers.encode('utf-8'), body_str.encode('utf-8')
 
     except Exception as e:
-        print("Erreur dans le filtrage HTML:", e)
-        return headers.encode('utf-8'), body  # Headers en bytes
+        print(f"{Colors.RED}Erreur dans le filtrage HTML:{Colors.END} {e}")
+        return headers.encode('utf-8'), body
 
 
 ##################### Requete HTTPS #####################
