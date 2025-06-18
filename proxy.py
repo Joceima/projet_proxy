@@ -40,15 +40,12 @@ class Colors:
 
 ################ CACHES FONCTIONS ################ 
 def save_to_cache(url, content):
-    """Sauvegarde dans un fichier texte avec un fichier .meta"""
     safe_url = re.sub(r'[^a-zA-Z0-9]', '_', url)
     cache_path = os.path.join('cache', safe_url)
     
-    # Fichier de contenu
     with open(cache_path, 'wb') as f:
         f.write(content)
     
-    # Fichier meta (timestamp)
     with open(cache_path + '.meta', 'w') as f:
         f.write(str(datetime.now().timestamp()))
 
@@ -60,8 +57,6 @@ def load_from_cache(url):
     
     if not os.path.exists(meta_path):
         return None
-    
-    # Vérification expiration
     with open(meta_path, 'r') as f:
         timestamp = float(f.read())
     
