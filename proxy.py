@@ -70,11 +70,11 @@ def load_config():
 
 def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retourne toujours des bytes
     config = load_config()
+    print(f"{Colors.CYAN}Configuration chargée:{Colors.END} {config}")
     mots_interdits = config.get('mots_interdits', [])
     filtrage_actif = config.get('filtrage_actif', True)
     
     print(f"\n{Colors.BOLD}{Colors.MAGENTA}=== DEBUG FILTRAGE ==={Colors.END}")
-    print(f"{Colors.CYAN}Configuration chargée:{Colors.END} {config}")
     print(f"{Colors.CYAN}Mots interdits:{Colors.END} {Colors.RED}{mots_interdits}{Colors.END}")
     print(f"{Colors.CYAN}Filtrage actif:{Colors.END} {Colors.GREEN if filtrage_actif else Colors.RED}{filtrage_actif}{Colors.END}")
 
