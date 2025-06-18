@@ -41,38 +41,41 @@ class ConfigHandler(BaseHTTPRequestHandler):
         self.send_header('Content-type', 'text/html')
         self.end_headers()
         
-        html = f"""
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Proxy Configuration</title>
-            <style>
-                body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                .container {{ max-width: 800px; margin: 0 auto; }}
-                textarea {{ width: 100%; height: 100px; }}
-                .btn {{ padding: 8px 15px; background: #4CAF50; color: white; border: none; }}
-            </style>
-        </head>
-        <body>
-            <div class="container">
-                <h1>Proxy Configuration</h1>
-                <form method="POST">
-                    <h3>Mots interdits (un par ligne):</h3>
-                    <textarea name="mots_interdits">{"\n".join(config.get('mots_interdits', []))}</textarea>
-                    
-                    <h3>Options:</h3>
-                    <label>
-                        <input type="checkbox" name="filtrage_actif" {'checked' if config.get('filtrage_actif', True) else ''}>
-                        Activer le filtrage
-                    </label>
-                    
-                    <br><br>
-                    <button type="submit" class="btn">Enregistrer</button>
-                </form>
-            </div>
-        </body>
-        </html>
-        """
+        html = """\
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Proxy Configuration</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    .container {{ max-width: 800px; margin: 0 auto; }}
+                    textarea {{ width: 100%; height: 100px; }}
+                    .btn {{ padding: 8px 15px; background: #4CAF50; color: white; border: none; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>Proxy Configuration</h1>
+                    <form method="POST">
+                        <h3>Mots interdits (un par ligne):</h3>
+                        <textarea name="mots_interdits">{mots}</textarea>
+                        
+                        <h3>Options:</h3>
+                        <label>
+                            <input type="checkbox" name="filtrage_actif" {checked}>
+                            Activer le filtrage
+                        </label>
+                        
+                        <br><br>
+                        <button type="submit" class="btn">Enregistrer</button>
+                    </form>
+                </div>
+            </body>
+            </html>
+            """.format(
+                mots="\n".join(config.get('mots_interdits', [])),
+                checked='checked' if config.get('filtrage_actif', True) else ''
+            )
         self.wfile.write(html.encode('utf-8'))
     
     def do_POST(self):

@@ -24,7 +24,7 @@ proxy_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR,1)
 proxy_socket.bind((adresse_ip, numero_port))
 proxy_socket.listen(socket.SOMAXCONN)
 
-# CODES COULEUR 
+# CODES COULEUR POUR LES PRINTS CONSOLES
 class Colors:
     RED = "\033[91m"
     GREEN = "\033[92m"
@@ -37,7 +37,7 @@ class Colors:
     UNDERLINE = "\033[4m"
     END = "\033[0m"
 
-
+################ CACHES FONCTIONS ################ 
 def load_cache():
     try:
         with open(CACHE_FILE, 'rb') as f:
@@ -49,14 +49,10 @@ def save_cache():
     with open(CACHE_FILE, 'wb') as f:
         pickle.dump(cache, f)
 
-
 # Chargement initial
 cache = load_cache()
 
-def gere_requete_HTTPS(client_socket, requete):
-    return
-
-
+##############Chargement configuration################
 def load_config():
     print("Chemin absolu du JSON:", os.path.abspath(CONFIG_FILE))
     try:
@@ -67,8 +63,10 @@ def load_config():
             return config
     except (FileNotFoundError, json.JSONDecodeError):
         return {'mots_interdits': [], 'filtrage_actif': True}
+    
 
-def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retourne toujours des bytes
+##############Filtrage contenu HTML################
+def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retourne des bytes
     config = load_config()
     print(f"{Colors.CYAN}Configuration chargée:{Colors.END} {config}")
     mots_interdits = config.get('mots_interdits', [])
@@ -117,9 +115,12 @@ def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):  # Retour
         print("Erreur dans le filtrage HTML:", e)
         return headers.encode('utf-8'), body  # Headers en bytes
 
-def enregistre_dans_cache(donnees_censurees):
+
+##################### Requete HTTPS #####################
+def gere_requete_HTTPS(client_socket, requete):
     return
 
+##################### Requete HTTP #####################
 """ Fonction permettant de gérer une requette HTTP"""
 def gere_requete_HTTP(client_socket, requete):
     try:
@@ -183,7 +184,7 @@ def gere_requete_HTTP(client_socket, requete):
         # Reconstruction de la requête
         requete_forward = [f"{methode} {chemin} HTTP/1.0"]  # Force HTTP/1.0
         
-        # Conservation des headers importants
+        # suppression des lignes commençant par 
         for key, value in headers.items():
             if key not in ['connection', 'proxy-connection', 'accept-encoding', 'content-length']:
                 requete_forward.append(f"{key}: {value}")
@@ -214,8 +215,19 @@ def gere_requete_HTTP(client_socket, requete):
                 reponse += data
 
             # Mise en cache (GET seulement)
-            if methode.upper() == 'GET' and b'200 OK' in reponse.split(b'\r\n')[0]:
-                print(f"[CACHE] Mise en cache de {url}")
+            #if methode.upper() == 'GET' and b'200 OK' in reponse.split(b'\r\n')[0]:
+            #    print(f"[CACHE] Mise en cache de {url}")
+            #    cache[url] = (reponse, datetime.now())
+            #    save_cache()
+
+            if methode.upper() == 'GET' and b'200 OK' in reponse.split(b'\r\n\r\n')[0]:
+                if b'\r\n\r\n' in reponse:
+                    headers, body = reponse.split(b'\r\n\r\n',1)
+                    headers_str = headers.decode('utf-8', errors='replace')
+                    if 'text/html' in headers_str.lower():
+                        headers, body = filtrer_contenu_html(headers_str, body)
+                        reponse = headers + b'\r\n\r\n' + body
+                print(f"[CACHE] Mise en cache (version filtrée) de {url}")
                 cache[url] = (reponse, datetime.now())
                 save_cache()
 
@@ -248,6 +260,7 @@ def gere_requete_HTTP(client_socket, requete):
         if 'serveur_socket' in locals():
             serveur_socket.close()
 
+##################### Analyse d'une requete #####################
 def analyser_requete(requete_bytes):
     try:
         requete = requete_bytes.decode('utf-8')
@@ -266,7 +279,8 @@ def analyser_requete(requete_bytes):
     for header in lignes[1:]:
         if header:  
             print(f"- {header.split(':')[0]}: {':'.join(header.split(':')[1:]).strip()}")   
-            
+
+#####################Gere un client#####################           
 def gerer_client(client_socket):
     requete = client_socket.recv(4096)
     if not requete : # pas de requeter
@@ -280,7 +294,7 @@ def gerer_client(client_socket):
         analyser_requete(requete)
         gere_requete_HTTP(client_socket, requete)
         
-
+#####################Boucle principale#####################
 while 1:
     (client_socket, TSAP_client) = proxy_socket.accept()
     print("Nouvelle connexion depuis ", TSAP_client)
