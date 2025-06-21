@@ -6,6 +6,8 @@ import select
 import os, sys, socket
 import threading
 from configHandler import ConfigHandler
+from mitmpproxy import MITMPProxy 
+from OpenSSL import crypto, SSL
 import threading
 from http.server import HTTPServer
 
@@ -98,6 +100,21 @@ def load_config():
     
     return config
 
+def filtrer_contenu_https(data):
+    try:
+        headers, body = data.split(b'\r\n\r\n',1)
+        if b'Content-Type: text/html' in headers:
+            body_str = body.decode('utf-8', errors='replace')
+            config = load_config()
+            for mot in config.get('mots_interdits', []):
+                body_str= re.sub(re.escape(mot), '[CENSURE]', body_str, flags=re.IGNORECASE)
+            return headers + b'\r\n\r\n' + body_str.encode()
+        return data
+    except Exception as e :
+        print(f"{Colors.YELLOW} Erreur de filtrage HTTPS: {e}{Colors.END}")
+        return data
+
+
 ##############Filtrage contenu HTML################
 def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):
     config = load_config()
@@ -167,9 +184,10 @@ def filtrer_contenu_html(headers: str, body: bytes) -> (bytes, bytes):
         return headers.encode('utf-8'), body
 
 
-##################### Requete HTTPS #####################
+##################### Requete HTTPS sans filtrage #####################
 # tunnel simple sans filtrage
-def gere_requete_HTTPS(client_socket, requete):
+
+def gere_requete_HTTPS_simple(client_socket, requete):
     try:
         #----------Extractionhost:port----------
         print(f"{Colors.BOLD}{Colors.BLUE}=== TUNNEL HTTPS DEMARRE ==={Colors.END}")
@@ -215,6 +233,80 @@ def gere_requete_HTTPS(client_socket, requete):
         if 'server_socket' in locals():
             server_socket.close()
         print(f"{Colors.BLUE}Tunnel HTTPS fermé{Colors.END}")
+
+
+
+
+def gere_requete_HTTPS(client_socket, requete):
+    try:
+        
+        key_path = "ca_key.pem"
+        root_ca_path = "ca.crt"
+
+        # extraction host et port
+        parts= requete.decode().split()
+        host, port = parts[1].split(':')
+        port = int(port)
+        print(f"{Colors.CYAN}Initialisation de MITMP{Colors.END}")
+        # initialisation  MITM
+        mitm = MITMPProxy()
+        mitm.__init__(key_path, root_ca_path)
+
+        print(f"{Colors.CYAN}Certificat dynamique{Colors.END}")
+        # certificat dynamique
+        key_pem, cert_pem, ca_pem = mitm.genere_CERT(host)
+        print("FIn certificat dynamique")
+
+        # config SSL
+        context = SSL.Context(SSL.SSLv23_METHOD)
+        context.set_options(SSL.OP_NO_SSLv2 | SSL.OP_NO_SSLv3 | SSL.OP_NO_TLSv1 | SSL.OP_NO_TLSv1_1)
+        context.set_cipher_list('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK')
+        context.use_privatekey(crypto.load_privatekey(crypto.FILETYPE_PEM, key_pem))
+        context.use_certificate(crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem))
+        context.add_extra_chain_cert(crypto.load_certificate(crypto.FILETYPE_PEM, ca_pem))
+
+        # connexion au serveur cible 
+        serveur_socket = socket.create_connection(host, port)
+        serveur_ssl = SSL.Connection(SSL.Context(SSL.TLSv1_2_METHOD), serveur_socket)
+        serveur_ssl.set_connect_state()
+        serveur_ssl.do_handshake()
+
+        # réponse ok du client
+        client_socket.send(b"HTTP/1.1 200 Connection Establised\r\n\r\n")
+
+        # enveloppe SSL côté client
+        client_ssl = SSL.Connection(context, client_socket)
+        client_ssl.set_accept_state()
+        client_ssl.do_handshake()
+
+        # 
+        while True:
+            try:
+                data = client_ssl.recv(8192)
+                if not data: break
+                if b'GET' in data or b'POST' in data:
+                    print(f"{Colors.CYAN} Requête interceptée:{Colors.END}")
+                    print(data[:500].decode('utf-8', errors='replace'))
+
+                serveur_ssl.sendall(data)
+
+                data = serveur_ssl.recv(8192)
+                if not data: break
+                if b'text/html' in data:
+                    data = filtrer_contenu_https(data)
+                client_ssl.sendall(data)
+
+            except SSL.Error as e:
+                print(f"{Colors.RED} Erreur SSL: {e}{Colors.END}")
+                break
+    except Exception as e:
+        print(f"{Colors.RED} Erreur interception HTTPS: {type(e).__name__}: {e}{Colors.END}")
+    finally:
+        client_socket.close()
+        if 'server_ssl' in locals():
+            serveur_ssl.shutdown()
+            serveur_socket.close()
+        print(f"{Colors.BLUE} Session MITM terminée{Colors.END}") 
 
 
 ##################### Requete HTTP #####################
@@ -309,7 +401,7 @@ def gere_requete_HTTP(client_socket, requete):
                         reponse = headers + b'\r\n\r\n' + body
                 print(f"[CACHE] Mise en cache (version filtrée) de {url}")
                 cache[url] = (reponse, datetime.now())
-                save_cache()
+                save_to_cache(url, reponse)
             # ------------ Filtrage du contenu ------------------
             if b'\r\n\r\n' in reponse:
                 headers, body = reponse.split(b'\r\n\r\n', 1)
@@ -380,3 +472,5 @@ while 1:
     (client_socket, TSAP_client) = proxy_socket.accept()
     print("Nouvelle connexion depuis ", TSAP_client)
     threading.Thread(target=gerer_client, args=(client_socket,)).start() # gérer client
+
+   
