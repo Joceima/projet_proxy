@@ -9,15 +9,15 @@ class MITMPProxy:
         print("On est dans la fonction init de MITMPProxy")
         self.ca_key_path = ca_key_path
         self.ca_cert_path = ca_cert_path
-        print("Initialisation des paths; maintenant on va generer ca_key et ca_cert")
+        print("Initialisation des paths")
         if not os.path.exists(ca_cert_path) or not os.path.exists(ca_key_path):
-            print("On est dans la condiion")
             print("Genere ROOT CA")
             self.ca_key, self.ca_cert = self.genere_root_ca("MITM Proxy Root CA")
         else:
             print("On est dans le sinon où on charge les clés")
             self.ca_key = self.__load_key__(ca_key_path)
             self.ca_cert = self.__load_cert__(ca_cert_path)
+            self.__load_ca__()
 
     """
     crée une autorité de certification racine
@@ -44,7 +44,7 @@ class MITMPProxy:
         print("Subject du certificat")
 
         # set subject of this certificate
-        subject = self.ca_cert.get_subject()
+        subject = cert.get_subject()
         subject.CN = common_name
         subject.O = "MITM Proxy"
         subject.C = "FR"
@@ -100,7 +100,17 @@ class MITMPProxy:
         print("Get subject")
         subject = cert.get_subject()
         subject.CN = hostname
-        cert.set_issuer(subject)
+        cert.set_subject(subject)
+        #cert.set_issuer(subject)
+        
+        cert.set_issuer(self.ca_cert.get_subject())
+        
+        """
+         Depuis plusieurs années, les clients TLS modernes
+         (navigateur, openssl, etc.) ne regardent plus seulement 
+         le CN mais surtout le Subject Alternative Name (SAN) pour 
+         valider le nom du serveur.
+        """
 
         print("fin du subject")
         cert.set_pubkey(key)
@@ -124,7 +134,7 @@ class MITMPProxy:
             # dump the private key pkey into a buffer string encoded with the type type 
             crypto.dump_privatekey(crypto.FILETYPE_PEM, key),
             # dump the certificate cert into a buffer string encoded with the type type 
-            crypto.dump_certificate(crypto.FILETYPE_PEM, cert),
+            crypto.dump_certificate(crypto.FILETYPE_PEM, cert) +
             crypto.dump_certificate(crypto.FILETYPE_PEM, self.ca_cert)
         )
 
@@ -143,4 +153,11 @@ class MITMPProxy:
     def __load_cert__(self,path_crt):
         with open(path_crt, "rb") as f:
             ca_crt = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
+            
+    def __load_ca__(self):
+        print("Chargement de la clé privée et du certificat")
+        with open(self.ca_key_path) as f:
+            self.ca_key = crypto.load_privatekey(crypto.FILETYPE_PEM, f.read())
+        with open(self.ca_cert_path) as f:
+            self.ca_cert = crypto.load_certificate(crypto.FILETYPE_PEM, f.read())
      

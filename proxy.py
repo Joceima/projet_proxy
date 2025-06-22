@@ -251,24 +251,38 @@ def gere_requete_HTTPS(client_socket, requete):
         # initialisation  MITM
         mitm = MITMPProxy()
         mitm.__init__(key_path, root_ca_path)
+        mitm.genere_root_ca(host)
 
         print(f"{Colors.CYAN}Certificat dynamique{Colors.END}")
         # certificat dynamique
-        key_pem, cert_pem, ca_pem = mitm.genere_CERT(host)
+        key_pem, full_cert_pem = mitm.genere_CERT(host)
+        
+        #result = mitm.genere_CERT(host)
+        #print(f"[DEBUG] nombre de valeurs retournées par genere CERT: {len(result)}")
         print("FIn certificat dynamique")
+       
 
         # config SSL
+        print("Configuration de SSL")
         context = SSL.Context(SSL.SSLv23_METHOD)
+        print("Context de SLL")
         context.set_options(SSL.OP_NO_SSLv2 | SSL.OP_NO_SSLv3 | SSL.OP_NO_TLSv1 | SSL.OP_NO_TLSv1_1)
+        print("Option de SSL")
         context.set_cipher_list('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK')
+        print("Cipher List ")
         context.use_privatekey(crypto.load_privatekey(crypto.FILETYPE_PEM, key_pem))
-        context.use_certificate(crypto.load_certificate(crypto.FILETYPE_PEM, cert_pem))
-        context.add_extra_chain_cert(crypto.load_certificate(crypto.FILETYPE_PEM, ca_pem))
+        print("Use private key")
+        context.use_certificate(crypto.load_certificate(crypto.FILETYPE_PEM, full_cert_pem))
+        print("Use certificate")
+        #context.add_extra_chain_cert(crypto.load_certificate(crypto.FILETYPE_PEM, ca_pem))
 
         # connexion au serveur cible 
-        serveur_socket = socket.create_connection(host, port)
+        print("Connexion au serveur cible")
+        # erreur argument 2, c'est que create_connection prend une pair de (host, port)
+        serveur_socket = socket.create_connection((host, port))
         serveur_ssl = SSL.Connection(SSL.Context(SSL.TLSv1_2_METHOD), serveur_socket)
         serveur_ssl.set_connect_state()
+        serveur_ssl.set_tlsext_host_name(host.encode()) # ajout du SNI au handshake
         serveur_ssl.do_handshake()
 
         # réponse ok du client
