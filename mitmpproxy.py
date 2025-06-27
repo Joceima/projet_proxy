@@ -31,7 +31,7 @@ class MITMPProxy:
         # représente une DSA ou RSA public key or key pair
         key = crypto.PKey()
         # génre une kay pair d'un type donnée, ICI type RSA avec un nombre de bit donné
-        key.generate_key(crypto.TYPE_RSA, 4096)
+        key.generate_key(crypto.TYPE_RSA, 2048)
 
         # class OpenSSL.crypto.X509
         # réprésente X.509 certificat
@@ -45,9 +45,9 @@ class MITMPProxy:
 
         # set subject of this certificate
         subject = cert.get_subject()
-        subject.CN = common_name
-        subject.O = "MITM Proxy"
-        subject.C = "FR"
+        subject.CN = "R10"
+        subject.O = "Let's Encrypt"
+        subject.C = "US"
 
         #set the timestamp at which the certificate starts being valid
         cert.gmtime_adj_notBefore(0)
