@@ -1,3 +1,19 @@
+
+
+
+# Liste des fichiers 
+proxy.py - Fichier principal contenant la gestion des requêtes HTTPS et HTTPS— 
+configHandler.py - Gestion de la configuration— 
+admin.py - Permet de lancer une page de configuration admin— 
+mitmpproxy.py - Implémentation du MITM pour HTTPS— 
+cache/ - Dossier contenant le cache— proxy_config.txt - Fichier de configuration texte2.2  
+
+# Commandes sur Linux
+python3 proxy.py - Permet de lancer le proxy HTTP/HTTPS.
+python3 admin.py - Permet de lancer la configutation du filtrage côté admin.
+
+
+# proxy.py
 filtrer_contenu_html(headers: str, body: bytes)→ (bytes, bytes) Filtre le contenuHTML d’une requête HTTP selon les règles de configuration.
 
 gere_requete_HTTP(client_socket, requete) Gère une requête HTTP entrante.filtrer_contenu_HTTPS(data) Filtrer le contenu HTTPS.
