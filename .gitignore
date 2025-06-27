@@ -1,6 +1,7 @@
 # Clés et certificats sensibles
 ca_key.pem
 ca.crt
+pfb.pem
 
 # Dossiers à ignorer
 cache/

@@ -268,7 +268,13 @@ def gere_requete_HTTPS(client_socket, requete):
         print("Context de SLL")
         context.set_options(SSL.OP_NO_SSLv2 | SSL.OP_NO_SSLv3 | SSL.OP_NO_TLSv1 | SSL.OP_NO_TLSv1_1)
         print("Option de SSL")
-        context.set_cipher_list('HIGH:!aNULL:!eNULL:!EXPORT:!DES:!RC4:!MD5:!PSK')
+        CIPHER_LIST = (
+            b'HIGH:'
+            b'!aNULL:!eNULL:'
+            b'!EXPORT:'
+            b'!DES:!RC4:!MD5:!PSK'
+        )
+        context.set_cipher_list(CIPHER_LIST)
         print("Cipher List ")
         context.use_privatekey(crypto.load_privatekey(crypto.FILETYPE_PEM, key_pem))
         print("Use private key")

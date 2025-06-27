@@ -45,7 +45,7 @@ class MITMPProxy:
 
         # set subject of this certificate
         subject = cert.get_subject()
-        subject.CN = "R10"
+        subject.CN = "MITM PRXY"
         subject.O = "Let's Encrypt"
         subject.C = "US"
 
